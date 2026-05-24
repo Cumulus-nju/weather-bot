@@ -1,0 +1,154 @@
+"""nonebot2 command handlers for weather-bot.
+
+Responds to QQ group commands:
+  /温度  /降水  /风场  /气压  /湿度  /综合  /帮助
+"""
+
+import asyncio
+import logging
+import traceback
+
+from nonebot import on_command
+from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message, MessageSegment
+from nonebot.matcher import Matcher
+from nonebot.params import CommandArg
+
+from src.pipeline import get_pipeline
+
+logger = logging.getLogger("weather-bot.handlers")
+
+# ---------------------------------------------------------------------------
+# Command registration
+# ---------------------------------------------------------------------------
+
+temperature   = on_command("温度", aliases={"气温"}, priority=5, block=True)
+precipitation = on_command("降水", aliases={"降雨", "雨量", "下雨"}, priority=5, block=True)
+wind          = on_command("风场", aliases={"风", "风速", "风向"}, priority=5, block=True)
+pressure      = on_command("气压", priority=5, block=True)
+humidity      = on_command("湿度", priority=5, block=True)
+comprehensive = on_command("综合", aliases={"天气", "全部"}, priority=5, block=True)
+help_cmd      = on_command("帮助", aliases={"help", "菜单", "说明"}, priority=10, block=True)
+
+# ---------------------------------------------------------------------------
+# Variable mapping
+# ---------------------------------------------------------------------------
+
+VAR_MAP = {
+    "温度": "temperature",
+    "气温": "temperature",
+    "降水": "precipitation",
+    "降雨": "precipitation",
+    "雨量": "precipitation",
+    "下雨": "precipitation",
+    "风场": "wind",
+    "风": "wind",
+    "风速": "wind",
+    "风向": "wind",
+    "气压": "pressure",
+    "湿度": "humidity",
+    "综合": "comprehensive",
+    "天气": "comprehensive",
+    "全部": "comprehensive",
+}
+
+# ---------------------------------------------------------------------------
+# Shared pipeline runner
+# ---------------------------------------------------------------------------
+
+_semaphore = asyncio.Semaphore(4)  # max concurrent pipeline runs
+
+
+async def run_pipeline_and_reply(
+    bot: Bot, event: GroupMessageEvent, variable: str, display_name: str
+):
+    """Run the weather pipeline in a thread and send the image back."""
+    async with _semaphore:
+        # Acknowledge
+        await bot.send(event, f"正在生成{display_name}图，请稍候...")
+
+        try:
+            pipeline = get_pipeline()
+            path = await asyncio.to_thread(pipeline.generate, variable)
+
+            # Send image — use file:/// for Windows absolute path
+            import pathlib
+            abs_path = pathlib.Path(path).resolve().as_posix()
+            msg = (
+                MessageSegment.text(f"【{display_name}】长三角实时分析\n")
+                + MessageSegment.image(f"file:///{abs_path}")
+            )
+            await bot.send(event, msg)
+
+        except Exception as e:
+            logger.error(f"Pipeline failed for {variable}: {traceback.format_exc()}")
+            err_msg = str(e)[:200] if str(e) else "未知错误"
+            await bot.send(event, f"生成失败: {err_msg}\n请稍后再试或联系管理员。")
+
+
+# ---------------------------------------------------------------------------
+# Handlers
+# ---------------------------------------------------------------------------
+
+@temperature.handle()
+async def handle_temperature(bot: Bot, event: GroupMessageEvent):
+    await run_pipeline_and_reply(bot, event, "temperature", "温度")
+
+
+@precipitation.handle()
+async def handle_precipitation(bot: Bot, event: GroupMessageEvent):
+    await run_pipeline_and_reply(bot, event, "precipitation", "降水")
+
+
+@wind.handle()
+async def handle_wind(bot: Bot, event: GroupMessageEvent):
+    await run_pipeline_and_reply(bot, event, "wind", "风场")
+
+
+@pressure.handle()
+async def handle_pressure(bot: Bot, event: GroupMessageEvent):
+    await run_pipeline_and_reply(bot, event, "pressure", "气压")
+
+
+@humidity.handle()
+async def handle_humidity(bot: Bot, event: GroupMessageEvent):
+    await run_pipeline_and_reply(bot, event, "humidity", "湿度")
+
+
+@comprehensive.handle()
+async def handle_comprehensive(bot: Bot, event: GroupMessageEvent):
+    await run_pipeline_and_reply(bot, event, "comprehensive", "综合")
+
+
+@help_cmd.handle()
+async def handle_help(bot: Bot, event: GroupMessageEvent):
+    help_text = (
+        "🌤 长三角天气绘图机器人\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "【实时站点观测 — 长三角】\n"
+        "/温度 — 2m温度分析图\n"
+        "/降水 — 降水量分布图\n"
+        "/风场 — 10m风场图(含风羽)\n"
+        "/气压 — 海平面气压分析图\n"
+        "/湿度 — 相对湿度分析图\n"
+        "/综合 — 四合一综合分析图\n\n"
+        "【ECMWF IFS 数值预报 — 全中国】\n"
+        "/EC 温度 [时效] — ECMWF 2m温度\n"
+        "/EC 降水 [时效] — ECMWF 累计降水\n"
+        "/EC 风场 [时效] — ECMWF 10m风场\n"
+        "/EC 气压 [时效] — ECMWF 海平面气压\n"
+        "/EC 湿度 [时效] — ECMWF 相对湿度\n"
+        "/EC 综合 [时效] — ECMWF 四合一大图\n\n"
+        "【GFS 数值预报 — 全中国】\n"
+        "/GFS 温度 [时效] — GFS 2m温度\n"
+        "/GFS 降水 [时效] — GFS 累计降水\n"
+        "/GFS 风场 [时效] — GFS 10m风场\n"
+        "/GFS 气压 [时效] — GFS 海平面气压\n"
+        "/GFS 湿度 [时效] — GFS 相对湿度\n"
+        "/GFS 综合 [时效] — GFS 四合一大图\n\n"
+        "时效(可选): 0=分析场 24/48/72=预报\n"
+        "  不填默认分析场(降水默认24h预报)\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "/帮助 — 显示本消息\n"
+        "南京大学气象爱好者"
+    )
+    await bot.send(event, help_text)
