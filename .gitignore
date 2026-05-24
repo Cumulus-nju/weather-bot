@@ -16,12 +16,14 @@ venv*/
 # Output (generated plots)
 output/*.png
 
-# NWP cache (large GRIB/netCDF downloads)
-data/nwp/
+# Training data (large, regen with build_training_data.py)
+data/training/X_train.npy
+data/training/X_val.npy
+data/training/Y_train.npy
+data/training/Y_val.npy
 
-# Training data and model files (too large for git)
-data/era5/
-data/training/
+# NWP cache (auto-downloaded at runtime)
+data/nwp/
 
 # IDE
 .idea/
