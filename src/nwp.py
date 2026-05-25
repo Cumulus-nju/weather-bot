@@ -360,16 +360,20 @@ class GFSSource(NWPSource):
         cache_path = self._cache_path(date, hour, step)
         tmp_grib = cache_path.with_suffix(".grib2")
 
+        # Clean up stale .grib2 and .idx files from previous runs (cfgrib cache
+        # confusion when old .idx is incompatible with a freshly-downloaded file)
+        if tmp_grib.exists():
+            tmp_grib.unlink()
+        for idx in tmp_grib.parent.glob(f"{tmp_grib.name}.*.idx"):
+            idx.unlink(missing_ok=True)
+
         date_str = date.strftime("%Y%m%d")
         dir_str = f"gfs.{date_str}/{hour:02d}/atmos"
 
         if step == 0:
-            file_str = f"gfs.t{hour:02d}z.pgrb2.0p25.anl"
+            file_str = f"gfs.t{hour:02d}z.pgrb2.0p25.f000"
         else:
             file_str = f"gfs.t{hour:02d}z.pgrb2.0p25.f{step:03d}"
-
-        # China bounding box for server-side subset (all positive in 0:360)
-        bbox = f"{CHINA_EXTENT[1]},{CHINA_EXTENT[0]},{CHINA_EXTENT[3]},{CHINA_EXTENT[2]}"
 
         url = (
             f"https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl"
@@ -387,8 +391,13 @@ class GFSSource(NWPSource):
 
         for attempt in range(1, 6):
             try:
-                resp = httpx.get(url, timeout=120, proxies={"http": None, "https": None})
+                resp = httpx.get(url, timeout=120)
                 if resp.status_code == 200 and len(resp.content) > 1000:
+                    # Verify GRIB2 magic bytes — NOAA may return HTML on error
+                    if resp.content[:4] != b"GRIB":
+                        raise RuntimeError(
+                            f"Response is not GRIB2 (starts with {resp.content[:80]!r})"
+                        )
                     tmp_grib.write_bytes(resp.content)
                     logger.info(f"[GFS] Downloaded {len(resp.content)/1e3:.0f} KB "
                                 f"(attempt {attempt})")
@@ -405,28 +414,41 @@ class GFSSource(NWPSource):
             raise RuntimeError(f"GFS download failed after 5 attempts: {url}")
 
         # Decode GRIB2 -> subset -> netCDF
-        logger.info(f"[GFS] Decoding GRIB2 ...")
-        with _grib_lock:
-            datasets = cfgrib.open_datasets(tmp_grib)
-            if len(datasets) > 1:
-                ds = xr.merge(datasets, compat="override")
-            elif len(datasets) == 1:
-                ds = datasets[0]
-            else:
-                raise RuntimeError("No variables decoded from GFS GRIB2")
+        logger.info(f"[GFS] Decoding GRIB2 ({tmp_grib.stat().st_size/1e6:.1f} MB) ...")
+        try:
+            with _grib_lock:
+                datasets = cfgrib.open_datasets(tmp_grib)
+                logger.info(f"[GFS] cfgrib returned {len(datasets)} hypercube(s)")
+                for i, d in enumerate(datasets):
+                    logger.info(f"[GFS]   hypercube[{i}]: {list(d.data_vars)} "
+                                f"dims={dict(d.dims)}")
+                if len(datasets) > 1:
+                    ds = xr.merge(datasets, compat="override")
+                elif len(datasets) == 1:
+                    ds = datasets[0]
+                else:
+                    raise RuntimeError("No variables decoded from GFS GRIB2")
 
-        # GFS filter URL subsets server-side, but we may need lon conversion
-        if ds.longitude.max() > 180:
-            lon_vals = ds.longitude.values
-            lon_vals[lon_vals > 180] -= 360
-            ds = ds.assign_coords(longitude=lon_vals)
-            ds = ds.sortby("longitude")
+            logger.info(f"[GFS] Merged variables: {list(ds.data_vars)}")
 
-        ds.to_netcdf(cache_path)
-        logger.info(f"[GFS] Cached → {cache_path.name} ({cache_path.stat().st_size/1e3:.0f} KB)")
+            # GFS filter URL subsets server-side, but we may need lon conversion
+            if ds.longitude.max() > 180:
+                lon_vals = ds.longitude.values
+                lon_vals[lon_vals > 180] -= 360
+                ds = ds.assign_coords(longitude=lon_vals)
+                ds = ds.sortby("longitude")
 
-        tmp_grib.unlink()
-        return cache_path
+            ds.to_netcdf(cache_path)
+            logger.info(f"[GFS] Cached → {cache_path.name} "
+                        f"({cache_path.stat().st_size/1e3:.0f} KB)")
+
+            return cache_path
+
+        finally:
+            if tmp_grib.exists():
+                tmp_grib.unlink()
+            for idx in tmp_grib.parent.glob(f"{tmp_grib.name}.*.idx"):
+                idx.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -575,10 +597,6 @@ class NWPPipeline:
                 u = self._get_field(ds, src, "wind_u")
                 v = self._get_field(ds, src, "wind_v")
                 fields["wind_speed"] = np.sqrt(u ** 2 + v ** 2)
-            elif var_key == "humidity" and isinstance(src, ECMWFSource):
-                temp_k = self._get_field(ds, src, "temperature")
-                dew_k = self._get_field(ds, src, "dewpoint")
-                fields["humidity"] = _dewpoint_to_rh(temp_k, dew_k)
             else:
                 fields[var_key] = self._get_field(ds, src, var_name)
 
@@ -600,6 +618,19 @@ class NWPPipeline:
 
         Returns data in ascending-lat order, matching plotter expectation.
         """
+        # ECMWF has no direct humidity variable — compute from dewpoint + temperature.
+        # Bypass _get_field unit conversions: _dewpoint_to_rh expects Kelvin for both.
+        if variable == "humidity" and isinstance(src, ECMWFSource):
+            t_short = src.VAR_SHORTNAMES.get("temperature", ["t2m"])
+            d_short = src.VAR_SHORTNAMES.get("dewpoint", ["d2m"])
+            temp_k = _extract_2d(ds, t_short)
+            dew_k = _extract_2d(ds, d_short)
+            if float(ds.latitude[0]) > float(ds.latitude[-1]):
+                temp_k = temp_k[::-1, ...]
+                dew_k = dew_k[::-1, ...]
+            field = _dewpoint_to_rh(temp_k, dew_k)
+            return field.astype(np.float32)
+
         short_names = src.VAR_SHORTNAMES.get(variable, [variable])
         field = _extract_2d(ds, short_names)
 
