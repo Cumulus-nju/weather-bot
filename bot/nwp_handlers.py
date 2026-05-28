@@ -192,6 +192,7 @@ def _help_text(cmd: str, source: str) -> str:
         f"数据来源: {sl} 0.25°\n"
         f"区域: 全中国 (73-136°E, 16-55°N)\n"
         f"缓存自动清理: 7天"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +206,7 @@ update_cmd = on_command("数据更新", priority=5, block=True)
 async def handle_update(bot: Bot, event: GroupMessageEvent):
     await bot.send(event, "开始更新NWP数据（ECMWF + GFS，含高空变量）...\n各步时效: 0/24/48/72h")
 
-    async def _update():
+    def _update():
         from src.nwp import ECMWFSource, GFSSource
 
         results: list[str] = []
@@ -266,4 +267,3 @@ async def handle_forecast(bot: Bot, event: GroupMessageEvent):
     except Exception as e:
         logger.error(f"Forecast failed: {traceback.format_exc()}")
         await bot.send(event, f"预报生成失败: {str(e)[:200]}")
-    )
