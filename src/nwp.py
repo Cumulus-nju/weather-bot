@@ -285,25 +285,41 @@ class ECMWFSource(NWPSource):
             from ecmwf.opendata import Client
 
             client = Client(source="ecmwf")
-            param_str = "2t/10u/10v/msl/tp/2d/z/t/u/v"
 
-            self._progress(f"[ECMWF] ↓ {date.strftime('%Y%m%d')}_{hour:02d}z +{step}h ...")
+            # Surface parameters
+            self._progress(f"[ECMWF] ↓ surface {date.strftime('%Y%m%d')}_{hour:02d}z +{step}h ...")
+            tmp_sfc = cache_path.with_suffix(".sfc.grib2")
             client.retrieve(
                 date=date.strftime("%Y-%m-%d"),
                 time=hour,
                 type="fc",
                 step=step,
-                param=param_str,
-                levelist="200/500/850",
-                target=str(tmp_grib),
+                param="2t/10u/10v/msl/tp/2d",
+                target=str(tmp_sfc),
             )
 
-            size_mb = tmp_grib.stat().st_size / 1e6
-            self._progress(f"[ECMWF] ✓ {date.strftime('%Y%m%d')}_{hour:02d}z +{step}h ({size_mb:.1f}MB) decoding ...")
+            # Upper-air parameters
+            self._progress(f"[ECMWF] ↓ upper-air {date.strftime('%Y%m%d')}_{hour:02d}z +{step}h ...")
+            tmp_ua = cache_path.with_suffix(".ua.grib2")
+            client.retrieve(
+                date=date.strftime("%Y-%m-%d"),
+                time=hour,
+                type="fc",
+                step=step,
+                param="z/t/u/v",
+                levelist="200/500/850",
+                target=str(tmp_ua),
+            )
+
+            # Merge both GRIB files into tmp_grib
+            with open(tmp_grib, "wb") as out:
+                for src in [tmp_sfc, tmp_ua]:
+                    with open(src, "rb") as f:
+                        out.write(f.read())
+
+            self._progress(f"[ECMWF] Downloaded, decoding ...")
 
             with _grib_lock:
-                # cfgrib.open_datasets splits on hypercube (surface / heightAboveGround / meanSea)
-                # compat='override' handles conflicting heightAboveGround coords (2m vs 10m)
                 datasets = cfgrib.open_datasets(tmp_grib)
                 if len(datasets) > 1:
                     ds = xr.merge(datasets, compat="override")
@@ -323,11 +339,13 @@ class ECMWFSource(NWPSource):
             return cache_path
 
         finally:
-            if tmp_grib.exists():
-                tmp_grib.unlink()
-            # Clean up cfgrib index files left alongside the grib
-            for idx in tmp_grib.parent.glob(f"{tmp_grib.name}.*.idx"):
-                idx.unlink(missing_ok=True)
+            for tmp in [tmp_grib, tmp_sfc, tmp_ua]:
+                if tmp.exists():
+                    tmp.unlink()
+            # Clean up cfgrib index files
+            for pat in [f"{tmp_grib.name}.*.idx", f"{tmp_sfc.name}.*.idx", f"{tmp_ua.name}.*.idx"]:
+                for idx in tmp_grib.parent.glob(pat):
+                    idx.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
