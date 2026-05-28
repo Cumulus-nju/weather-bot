@@ -253,7 +253,7 @@ class ECMWFSource(NWPSource):
         "pressure":      ["msl"],
         "dewpoint":      ["d2m", "2d"],
         # Upper-air (pressure-level fields)
-        "h500":          ["gh"],
+        "h500":          ["z", "gh"],
         "t850":          ["t"],
         "u850":          ["u"],
         "v850":          ["v"],
@@ -285,7 +285,7 @@ class ECMWFSource(NWPSource):
             from ecmwf.opendata import Client
 
             client = Client(source="ecmwf")
-            param_str = "2t/10u/10v/msl/tp/2d/gh/500/t/850/u/850/v/850/u/200/v/200"
+            param_str = "2t/10u/10v/msl/tp/2d/z/t/u/v"
 
             self._progress(f"[ECMWF] ↓ {date.strftime('%Y%m%d')}_{hour:02d}z +{step}h ...")
             client.retrieve(
@@ -294,6 +294,7 @@ class ECMWFSource(NWPSource):
                 type="fc",
                 step=step,
                 param=param_str,
+                levelist="200/500/850",
                 target=str(tmp_grib),
             )
 

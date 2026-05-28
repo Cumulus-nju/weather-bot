@@ -541,7 +541,7 @@ class ForecastEngine:
     # ------------------------------------------------------------------
 
     def _h500(self, ds) -> np.ndarray:
-        h = _extract(ds, ["gh", "hgt"], level=500)
+        h = _extract(ds, ["z", "gh", "hgt"], level=500)
         if np.nanmax(h) > 10000:
             h = h / 9.80665  # m²/s² → gpm
         return h
