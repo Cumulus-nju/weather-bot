@@ -275,6 +275,9 @@ class ForecastEngine:
         main_date, main_hour = (ec_date, ec_hour) if ec_an is not None else (gfs_date, gfs_hour)
         main_date_str = main_date.strftime("%Y%m%d")
 
+        ec_date_str = ec_date.strftime("%Y%m%d") if ec_date else ""
+        gfs_date_str = gfs_date.strftime("%Y%m%d") if gfs_date else ""
+
         parts: list[str] = []
         self._build_header(parts, main_date, main_hour, ds_main_label)
         self._build_synoptic_overview(parts, ds_main)
