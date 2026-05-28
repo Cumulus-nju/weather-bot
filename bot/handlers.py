@@ -166,12 +166,16 @@ cloud_cmd = on_command("今日云朵", aliases={"云朵", "云"}, priority=10, b
 
 @cloud_cmd.handle()
 async def handle_cloud(bot: Bot, event: GroupMessageEvent):
-    clouds = _get_clouds()
-    if not clouds:
-        await bot.send(event, "云图文件夹为空，请检查 Desktop/云图 目录。")
-        return
+    try:
+        clouds = _get_clouds()
+        if not clouds:
+            await bot.send(event, "云图文件夹为空，请检查 Desktop/云图 目录。")
+            return
 
-    name, path = random.choice(clouds)
-    abs_path = Path(path).resolve().as_posix()
-    msg = MessageSegment.text(f"今日云朵：{name} ☁\n") + MessageSegment.image(f"file:///{abs_path}")
-    await bot.send(event, msg)
+        name, path = random.choice(clouds)
+        abs_path = Path(path).resolve().as_posix()
+        msg = MessageSegment.text(f"今日云朵：{name}") + MessageSegment.image(f"file:///{abs_path}")
+        await bot.send(event, msg)
+    except Exception as e:
+        logger.error(f"Cloud command failed: {traceback.format_exc()}")
+        await bot.send(event, f"云朵命令出错: {e}")
