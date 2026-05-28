@@ -496,7 +496,7 @@ class NWPPipeline:
         First user request of a new cycle will hit the 6h cache instead of
         waiting for a live download.
         """
-        COMMON_STEPS = [0, 24]  # analysis + 24h precipitation forecast
+        COMMON_STEPS = [0, 24, 48, 72]  # all common forecast steps
         for src in self._sources.values():
             try:
                 date, hour = src.get_latest_cycle()
