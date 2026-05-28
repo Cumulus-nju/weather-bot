@@ -165,7 +165,7 @@ def _find_extrema(field, lon2d, lat2d, n=3, find_max=True):
         lo, la = float(lon2d[y, x]), float(lat2d[y, x])
         # Skip if too close to an already selected point
         too_close = False
-        for _, rlo, rla in results:
+        for _, rlo, rla, _ in results:
             if abs(lo - rlo) < 5 and abs(la - rla) < 5:
                 too_close = True
                 break
