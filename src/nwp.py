@@ -254,11 +254,8 @@ class ECMWFSource(NWPSource):
         try:
             from ecmwf.opendata import Client
 
-            client = Client(source="ecmwf")
+            client = Client(source="azure")  # Azure CDN faster from China than ECMWF EU
             param_str = "2t/10u/10v/msl/tp/2d"
-
-            # China subset: [North, West, South, East] — ~90% smaller than global
-            area = [CHINA_EXTENT[3], CHINA_EXTENT[0], CHINA_EXTENT[2], CHINA_EXTENT[1]]
 
             logger.info(f"[ECMWF] Fetching {date.strftime('%Y%m%d')}_{hour:02d}z step={step} ...")
             client.retrieve(
@@ -267,7 +264,6 @@ class ECMWFSource(NWPSource):
                 type="fc",
                 step=step,
                 param=param_str,
-                area=area,
                 target=str(tmp_grib),
             )
 
