@@ -121,34 +121,16 @@ async def handle_comprehensive(bot: Bot, event: GroupMessageEvent):
 
 @help_cmd.handle()
 async def handle_help(bot: Bot, event: GroupMessageEvent):
-    help_text = (
-        "🌤 长三角天气绘图机器人\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "【实时站点观测 — 长三角】\n"
-        "/温度 — 2m温度分析图\n"
-        "/降水 — 降水量分布图\n"
-        "/风场 — 10m风场图(含风羽)\n"
-        "/气压 — 海平面气压分析图\n"
-        "/湿度 — 相对湿度分析图\n"
-        "/综合 — 四合一综合分析图\n\n"
-        "【ECMWF IFS 数值预报 — 全中国】\n"
-        "/EC 温度 [时效] — ECMWF 2m温度\n"
-        "/EC 降水 [时效] — ECMWF 累计降水\n"
-        "/EC 风场 [时效] — ECMWF 10m风场\n"
-        "/EC 气压 [时效] — ECMWF 海平面气压\n"
-        "/EC 湿度 [时效] — ECMWF 相对湿度\n"
-        "/EC 综合 [时效] — ECMWF 四合一大图\n\n"
-        "【GFS 数值预报 — 全中国】\n"
-        "/GFS 温度 [时效] — GFS 2m温度\n"
-        "/GFS 降水 [时效] — GFS 累计降水\n"
-        "/GFS 风场 [时效] — GFS 10m风场\n"
-        "/GFS 气压 [时效] — GFS 海平面气压\n"
-        "/GFS 湿度 [时效] — GFS 相对湿度\n"
-        "/GFS 综合 [时效] — GFS 四合一大图\n\n"
-        "时效(可选): 0=分析场 24/48/72=预报\n"
-        "  不填默认分析场(降水默认24h预报)\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "/帮助 — 显示本消息\n"
-        "南京大学气象爱好者"
-    )
-    await bot.send(event, help_text)
+    try:
+        from src.help_image import generate_help_image
+
+        path = generate_help_image()
+        abs_path = Path(path).resolve().as_posix()
+        msg = MessageSegment.image(f"file:///{abs_path}")
+        await bot.send(event, msg)
+    except Exception:
+        # Fallback to short text if image generation fails
+        await bot.send(event,
+                       "/温度 /降水 /风场 /气压 /湿度 /综合\n"
+                       "/EC <变量> [时效]  /GFS <变量> [时效]\n"
+                       "/预报  /数据更新  /帮助")
