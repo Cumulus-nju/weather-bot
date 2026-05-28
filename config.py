@@ -1,6 +1,9 @@
 """Global configuration for weather-bot — Yangtze River Delta edition."""
 
+from __future__ import annotations
+
 import os
+from datetime import datetime
 from pathlib import Path
 
 try:
@@ -113,3 +116,23 @@ NWP_MAX_CACHE_AGE_DAYS = 7      # auto-delete cached files older than 7 days
 NWP_GRID_RES = 0.25             # native resolution of ECMWF open data and GFS 0.25°
 
 # ==========================  LocalWords:  YANGTZE  cressman  barnes  CDSAPI
+
+# ---------------------------------------------------------------------------
+# Seasonal ML models
+# ---------------------------------------------------------------------------
+SEASONS = {
+    "spring": [3, 4, 5],
+    "summer": [6, 7, 8],
+    "autumn": [9, 10, 11],
+    "winter": [12, 1, 2],
+}
+
+
+def get_season(month: int | None = None) -> str:
+    """Return season name for a given month (1-12). Defaults to current month."""
+    if month is None:
+        month = datetime.now().month
+    for name, months in SEASONS.items():
+        if month in months:
+            return name
+    return "spring"  # unreachable

@@ -17,10 +17,15 @@ venv*/
 output/*.png
 
 # Training data (large, regen with build_training_data.py)
-data/training/X_train.npy
-data/training/X_val.npy
-data/training/Y_train.npy
-data/training/Y_val.npy
+data/training/*/X_train.npy
+data/training/*/Y_train.npy
+data/training/*/X_val.npy
+data/training/*/Y_val.npy
+
+# ERA5 data (download separately)
+data/era5/era5_2023/
+data/era5/era5_2024/
+data/era5/era5_tp.nc
 
 # NWP cache (auto-downloaded at runtime)
 data/nwp/

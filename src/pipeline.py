@@ -23,7 +23,7 @@ from config import (
     BARNES_SIGMA, BARNES_PASSES, BARNES_GAMMA,
     CRESSMAN_RADII,
     OI_BG_ERROR_VAR, OI_OBS_ERROR_VAR, OI_CORR_LENGTH, OI_MAX_SCAN_RADIUS, OI_MAX_STATIONS,
-    PIPELINE_MAX_TIME, POST_SMOOTH_SIGMA,
+    PIPELINE_MAX_TIME, POST_SMOOTH_SIGMA, get_season,
 )
 from src.interpolation import make_grid, barnes, cressman, idw, ordinary_kriging
 from src.assimilation import oi_analyze
@@ -54,9 +54,15 @@ class Pipeline:
         self.method = DEFAULT_METHOD
         self.lon_g, self.lat_g = make_grid(self.extent, self.grid_res)
         self.station_source = create_station_source(STATION_DATA_SOURCE)
-        self.refiner = load_refiner() if self.method == "ml" else None
+        if self.method == "ml":
+            self.season = get_season()
+            self.refiner = load_refiner(self.season)
+        else:
+            self.season = None
+            self.refiner = None
         logger.info(f"Pipeline init: extent={self.extent}, res={self.grid_res}, "
-                    f"grid={self.lon_g.shape}, source={STATION_DATA_SOURCE}, method={self.method}")
+                    f"grid={self.lon_g.shape}, source={STATION_DATA_SOURCE}, "
+                    f"method={self.method}, season={self.season}")
 
     # ------------------------------------------------------------------
     # Public API
@@ -99,7 +105,7 @@ class Pipeline:
     # ------------------------------------------------------------------
 
     def _ml_refine(self, obs: StationObs) -> dict[str, np.ndarray]:
-        """Build all 5 IDW channels and run ML refinement once. Returns refined dict."""
+        """Build all 6 IDW channels and run ML refinement once. Returns refined dict."""
         dewpoint = _temp_rh_to_dewpoint(obs.temp, obs.humidity)
 
         var_data = {
@@ -108,6 +114,7 @@ class Pipeline:
             "u10": obs.wind_u,
             "v10": obs.wind_v,
             "msl": obs.pressure,
+            "tp": obs.precip,
         }
 
         idw_fields = {}
@@ -147,16 +154,9 @@ class Pipeline:
             refined = self._ml_refine(obs)
             # Map variable name to channel
             channel_map = {"temperature": "t2m", "humidity": "d2m",
-                           "pressure": "msl", "precipitation": None}
+                           "pressure": "msl", "precipitation": "tp"}
             ch = channel_map.get(variable, "t2m")
-            if ch is None:
-                # precipitation: ML model doesn't handle it, use Barnes
-                data = obs.to_dict(variable)
-                field = barnes(data["lon"], data["lat"], data["values"],
-                               self.lon_g, self.lat_g,
-                               sigma=BARNES_SIGMA, passes=BARNES_PASSES,
-                               gamma=BARNES_GAMMA, max_scan=OI_MAX_SCAN_RADIUS)
-            elif ch == "d2m":
+            if ch == "d2m":
                 # humidity: compute RH from refined t2m and d2m
                 dewpoint_f = refined[ch]
                 temp_f = refined["t2m"]
@@ -168,6 +168,8 @@ class Pipeline:
                 field = rh
             else:
                 field = refined[ch]
+                if ch == "tp":
+                    field = np.maximum(field, 0)  # precipitation can't be negative
 
             lons_s, lats_s, values = obs.lons, obs.lats, obs.temp
         else:

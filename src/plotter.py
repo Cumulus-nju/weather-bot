@@ -3,6 +3,8 @@
 Supports: scalar contour-fill, wind barbs, multi-panel composites.
 """
 
+from __future__ import annotations
+
 from datetime import datetime
 
 import matplotlib
@@ -49,9 +51,11 @@ def _precip_colors():
 def _humidity_colors():
     from matplotlib.colors import LinearSegmentedColormap
     colors = [
-        (0.0, "#8B4513"), (0.2, "#D2B48C"), (0.35, "#F5F5DC"),
-        (0.5, "#87CEEB"), (0.65, "#4169E1"), (0.85, "#0000CD"),
-        (1.0, "#000080"),
+        (0.0, "#C4A882"),   # light brown — very dry
+        (0.25, "#E8DCC8"),  # beige — dry
+        (0.5, "#C9E4EF"),   # pale blue — moderate
+        (0.75, "#7CB8D8"),  # soft medium blue — humid
+        (1.0, "#5B9BD5"),   # light sky blue — very humid
     ]
     return LinearSegmentedColormap.from_list("humidity", colors)
 
@@ -85,16 +89,54 @@ FIXED_RANGES = {
     "humidity":      (10, 100),
 }
 
+# Variable-specific contour line interval (degrees/units between lines)
+CONTOUR_INTERVAL = {
+    "temperature":   1.0,
+    "pressure":      2.0,
+    "humidity":      5.0,
+    "precipitation": 2.0,
+    "wind_speed":    1.0,
+    "wind":          1.0,
+}
+
+# ---------------------------------------------------------------------------
+# Ocean masking — grid-level NaN so data only shows over land
+# ---------------------------------------------------------------------------
+
+_land_sea_mask: np.ndarray | None = None
+
+
+def _get_land_sea_mask() -> np.ndarray:
+    global _land_sea_mask
+    if _land_sea_mask is None:
+        mask_path = Path(OUTPUT_DIR).parent / "data" / "training" / "land_sea_mask.npy"
+        if mask_path.exists():
+            _land_sea_mask = np.load(mask_path).astype(np.float32)
+        else:
+            _land_sea_mask = np.ones((1,))
+    return _land_sea_mask
+
+
+def _mask_ocean(data: np.ndarray) -> np.ndarray:
+    """Set ocean grid points to NaN so no interpolation shows over water."""
+    lsm = _get_land_sea_mask()
+    if lsm.shape == data.shape:
+        result = data.copy()
+        result[lsm < 0.5] = np.nan
+        return result
+    return data
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 def _map_features(ax):
-    ax.add_feature(cfeature.COASTLINE, linewidth=0.5, edgecolor="#333333")
-    ax.add_feature(cfeature.BORDERS, linewidth=0.3, linestyle="--", edgecolor="#666666")
     ax.add_feature(cfeature.OCEAN, facecolor="#e8f4f8", zorder=0)
     ax.add_feature(cfeature.LAND, facecolor="#f5f5f0", zorder=0)
     ax.add_feature(cfeature.LAKES, facecolor="#d4e8f0", linewidth=0.2, zorder=1)
+    ax.add_feature(cfeature.COASTLINE, linewidth=0.5, edgecolor="#333333")
+    ax.add_feature(cfeature.BORDERS, linewidth=0.3, linestyle="--", edgecolor="#666666")
 
 
 def _gridlines(ax):
@@ -105,12 +147,16 @@ def _gridlines(ax):
     gl.ylocator = mticker.MaxNLocator(nbins=6)
 
 
-def _nice_ticks(vmin, vmax, target_n=12):
-    """Return float ticks at nice intervals (0.5, 1, 2, 5, 10, ...)."""
+def _nice_ticks(vmin, vmax, target_n=12, step=None):
+    """Return float ticks. If step is given, use it directly; otherwise auto-pick."""
     span = vmax - vmin
     if span <= 0:
         return np.array([vmin, vmax])
-    # Pick step size from [0.5, 1, 2, 5, 10, 20, 50, ...]
+    if step is not None:
+        lo = np.floor(vmin / step) * step
+        hi = np.ceil(vmax / step) * step
+        return np.arange(lo, hi + step * 0.5, step)
+    # Auto-pick step size from [0.5, 1, 2, 5, 10, 20, 50, ...]
     raw_step = span / target_n
     magnitude = 10 ** np.floor(np.log10(raw_step))
     for s in [0.5, 1, 2, 5, 10]:
@@ -233,10 +279,12 @@ def plot_grid(lon_g, lat_g, field, title="", var_type="default",
         ax.set_extent(extent or [lon_g.min(), lon_g.max(), lat_g.min(), lat_g.max()], crs=proj)
         _map_features(ax)
 
+        data = _mask_ocean(data)
         cf = ax.contourf(lon_g, lat_g, data, levels=levels_arr, cmap=cmap,
                          transform=proj, extend="both", antialiased=True)
 
-        ticks = _nice_ticks(vmin, vmax)
+        step = CONTOUR_INTERVAL.get(var_type)
+        ticks = _nice_ticks(vmin, vmax, step=step)
         fmt = _tick_format(vmin, vmax)
         cs = ax.contour(lon_g, lat_g, data, levels=ticks, colors="#222222",
                         linewidths=0.5, transform=proj)
@@ -305,10 +353,12 @@ def plot_wind_barbs(lon_g, lat_g, speed, u, v, title="", extent=None,
     _map_features(ax)
 
     cmap = CMAPS["wind_speed"]
+    speed = _mask_ocean(speed)
     cf = ax.contourf(lon_g, lat_g, speed, levels=levels_arr, cmap=cmap,
                      transform=proj, extend="max", antialiased=True)
 
-    ticks = _nice_ticks(vmin, vmax)
+    step = CONTOUR_INTERVAL.get("wind_speed")
+    ticks = _nice_ticks(vmin, vmax, step=step)
     fmt = _tick_format(vmin, vmax)
     cs = ax.contour(lon_g, lat_g, speed, levels=ticks, colors="#222222",
                     linewidths=0.4, transform=proj)
@@ -373,9 +423,11 @@ def plot_multi_panel(lon_g, lat_g, fields, title="长三角天气综合分析",
             vmax = vmin + 5
         levels_arr = np.linspace(vmin, vmax, 60)
 
+        data = _mask_ocean(data)
         cf = ax.contourf(lon_g, lat_g, data, levels=levels_arr, cmap=cmap,
                          transform=proj, extend="both", antialiased=True)
-        ticks = _nice_ticks(vmin, vmax)
+        step = CONTOUR_INTERVAL.get(key)
+        ticks = _nice_ticks(vmin, vmax, step=step)
         fmt = _tick_format(vmin, vmax)
         cs = ax.contour(lon_g, lat_g, data, levels=ticks, colors="#222222",
                         linewidths=0.3, transform=proj)

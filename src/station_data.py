@@ -250,7 +250,7 @@ class QWeatherSource(CachedSource):
                     hums.append(float(now["humidity"]))
                     press.append(float(now["pressure"]))
                     wd_deg = float(now.get("wind360", 0))
-                    ws_mps = float(now.get("windSpeed", 0))
+                    ws_mps = float(now.get("windSpeed", 0)) / 3.6  # QWeather returns km/h
                     wd.append(wd_deg)
                     ws.append(ws_mps)
                     precip.append(float(now.get("precip", 0.0)))
