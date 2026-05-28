@@ -254,7 +254,7 @@ class ECMWFSource(NWPSource):
         try:
             from ecmwf.opendata import Client
 
-            client = Client(source="azure")  # Azure CDN faster from China than ECMWF EU
+            client = Client(source="ecmwf")
             param_str = "2t/10u/10v/msl/tp/2d"
 
             logger.info(f"[ECMWF] Fetching {date.strftime('%Y%m%d')}_{hour:02d}z step={step} ...")
