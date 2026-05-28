@@ -35,6 +35,57 @@ from src.ml_model import load_refiner, refine
 logger = logging.getLogger("weather-bot.pipeline")
 
 
+def _max_station_gradient(lons, lats, values, max_pairs: int = 500) -> float:
+    """Compute max |ΔT|/distance between station observations (°C per degree).
+
+    Samples up to *max_pairs* random station pairs to avoid O(N²) blowup.
+    """
+    n = len(lons)
+    if n < 2:
+        return float("inf")
+    rng = np.random.default_rng(42)  # deterministic
+    idxs = np.arange(n)
+    pairs = set()
+    while len(pairs) < min(max_pairs, n * (n - 1) // 2):
+        i, j = int(rng.integers(0, n)), int(rng.integers(0, n))
+        if i >= j:
+            i, j = j, i
+        if i != j:
+            pairs.add((i, j))
+    grad_max = 0.0
+    cos_lat = np.cos(np.radians(np.mean(lats)))
+    for i, j in pairs:
+        dx = (lons[j] - lons[i]) * cos_lat
+        dy = lats[j] - lats[i]
+        dist = np.sqrt(dx ** 2 + dy ** 2)
+        if dist < 0.01:
+            continue
+        g = abs(values[j] - values[i]) / dist
+        if g > grad_max:
+            grad_max = g
+    return grad_max
+
+
+def _apply_gradient_limit(field, lon_g, lat_g, grad_limit, sigma: float = 0.8,
+                          max_iters: int = 6):
+    """Iteratively smooth *field* until its max gradient ≤ *grad_limit*.
+
+    *grad_limit* in °C per degree; *sigma* is Gaussian sigma per iteration.
+    """
+    if grad_limit <= 0 or np.isinf(grad_limit):
+        return field
+    f = field.copy()
+    for _ in range(max_iters):
+        dy, dx = np.gradient(f, lat_g[:, 0], lon_g[0, :])
+        # dx is in °C/degree, but longitude degrees need cos(lat) correction
+        cos_lat = np.cos(np.radians(lat_g))
+        mag = np.sqrt(dy ** 2 + (dx * cos_lat) ** 2)  # °C / degree
+        if np.nanmax(mag) <= grad_limit:
+            break
+        f = gaussian_filter(f, sigma=sigma)
+    return f
+
+
 def _temp_rh_to_dewpoint(temp_c: np.ndarray, rh_pct: np.ndarray) -> np.ndarray:
     """Convert temperature (°C) + relative humidity (%) → dewpoint (°C).
     Uses the Magnus formula with Sonntag coefficients.
@@ -182,8 +233,12 @@ class Pipeline:
         # Clamp temperature to observed range (no extrapolation beyond station values)
         if variable == "temperature":
             t_obs = obs.temp[~np.isnan(obs.temp)]
+            t_lons = obs.lons[~np.isnan(obs.temp)]
+            t_lats = obs.lats[~np.isnan(obs.temp)]
             if len(t_obs) > 0:
                 field = np.clip(field, float(np.min(t_obs)), float(np.max(t_obs)))
+                grad_limit = _max_station_gradient(t_lons, t_lats, t_obs)
+                field = _apply_gradient_limit(field, self.lon_g, self.lat_g, grad_limit)
 
         stations_dict = {"lon": obs.lons, "lat": obs.lats,
                           "values": self._station_display_values(variable, obs),
