@@ -141,35 +141,28 @@ async def handle_help(bot: Bot, event: GroupMessageEvent):
 # /今日云朵 — random cloud of the day
 # ---------------------------------------------------------------------------
 
-import random, re
-from pathlib import Path
-
-CLOUD_DIR = Path.home() / "Desktop" / "云图"
-
-_cloud_cache: list[tuple[str, str]] | None = None
-
-
-def _get_clouds() -> list[tuple[str, str]]:
-    global _cloud_cache
-    if _cloud_cache is None:
-        clouds: list[tuple[str, str]] = []
-        for f in sorted(CLOUD_DIR.glob("*")):
-            if f.suffix.lower() in (".jpg", ".jpeg", ".png", ".jfif", ".gif", ".webp"):
-                name = re.sub(r"[\d\s.]+$", "", f.stem)
-                clouds.append((name, str(f)))
-        _cloud_cache = clouds
-    return _cloud_cache
-
-
-cloud_cmd = on_command("今日云朵", aliases={"云朵", "云"}, priority=10, block=True)
+cloud_cmd = on_command("今日云朵", priority=10, block=True)
 
 
 @cloud_cmd.handle()
 async def handle_cloud(bot: Bot, event: GroupMessageEvent):
     try:
-        clouds = _get_clouds()
+        import random, re
+        from pathlib import Path
+
+        cloud_dir = Path("C:/Users/HONOR/Desktop/云图")
+        if not cloud_dir.exists():
+            await bot.send(event, "云图文件夹不存在，请检查。")
+            return
+
+        clouds: list[tuple[str, str]] = []
+        for f in sorted(cloud_dir.glob("*")):
+            if f.suffix.lower() in (".jpg", ".jpeg", ".png", ".jfif", ".gif", ".webp"):
+                name = re.sub(r"[\d\s.]+$", "", f.stem)
+                clouds.append((name, str(f)))
+
         if not clouds:
-            await bot.send(event, "云图文件夹为空，请检查 Desktop/云图 目录。")
+            await bot.send(event, "云图文件夹为空。")
             return
 
         name, path = random.choice(clouds)

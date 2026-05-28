@@ -178,6 +178,13 @@ class Pipeline:
             field = self._fallback_interp(lons_s, lats_s, values)
 
         field = self._smooth(field)
+
+        # Clamp temperature to observed range (no extrapolation beyond station values)
+        if variable == "temperature":
+            t_obs = obs.temp[~np.isnan(obs.temp)]
+            if len(t_obs) > 0:
+                field = np.clip(field, float(np.min(t_obs)), float(np.max(t_obs)))
+
         stations_dict = {"lon": obs.lons, "lat": obs.lats,
                           "values": self._station_display_values(variable, obs),
                           "names": obs.names}
