@@ -121,16 +121,17 @@ async def handle_comprehensive(bot: Bot, event: GroupMessageEvent):
 
 @help_cmd.handle()
 async def handle_help(bot: Bot, event: GroupMessageEvent):
-    try:
-        from src.help_image import generate_help_image
-
-        path = generate_help_image()
-        abs_path = Path(path).resolve().as_posix()
-        msg = MessageSegment.image(f"file:///{abs_path}")
-        await bot.send(event, msg)
-    except Exception:
-        # Fallback to short text if image generation fails
-        await bot.send(event,
-                       "/温度 /降水 /风场 /气压 /湿度 /综合\n"
-                       "/EC <变量> [时效]  /GFS <变量> [时效]\n"
-                       "/预报  /数据更新  /帮助")
+    await bot.send(event,
+                   "Cumulus 天气绘图机器人\n"
+                   "━━━━━━━━━━━━━━━━━━\n"
+                   "【实时 长三角】\n"
+                   "/温度 /降水 /风场 /气压 /湿度 /综合\n\n"
+                   "【ECMWF 全中国】\n"
+                   "/EC 温度|降水|风场|气压|湿度|综合 [时效]\n"
+                   "/EC h500|t850|高空风场\n\n"
+                   "【GFS 全中国】\n"
+                   "/GFS 温度|降水|风场|气压|湿度|综合 [时效]\n"
+                   "/GFS h500|t850|高空风场\n\n"
+                   "时效: 不填=分析场 24/48/72=预报\n"
+                   "━━━━━━━━━━━━━━━━━━\n"
+                   "/预报 /数据更新 /帮助")
