@@ -107,12 +107,23 @@ def _subset_china(ds: "xr.Dataset") -> "xr.Dataset":
     return ds_sub
 
 
-def _extract_2d(ds: "xr.Dataset", short_names: list[str]) -> np.ndarray:
-    """Extract first matching 2D field from a cfgrib/xarray Dataset by GRIB shortName."""
+def _extract_2d(ds: "xr.Dataset", short_names: list[str],
+                level: int | None = None) -> np.ndarray:
+    """Extract first matching 2D field from a cfgrib/xarray Dataset by GRIB shortName.
+
+    If *level* is given (hPa), select by isobaricInhPa coordinate before squeezing.
+    """
     for vn in list(ds.data_vars):
         da = ds[vn]
         sn = da.attrs.get("GRIB_shortName", vn)
         if sn in short_names:
+            # Handle multi-level pressure data
+            if level is not None and 'isobaricInhPa' in da.dims:
+                # Try exact match first, then nearby
+                try:
+                    da = da.sel(isobaricInhPa=float(level), method='nearest')
+                except Exception:
+                    pass
             arr = np.squeeze(da.values)
             if arr.ndim != 2:
                 raise ValueError(
@@ -121,13 +132,19 @@ def _extract_2d(ds: "xr.Dataset", short_names: list[str]) -> np.ndarray:
                 )
             return arr.astype(np.float32)
 
-    # Fallback: try variable name directly
+    # Fallback: try variable name directly (handles renamed variables)
     for sn in short_names:
         if sn in ds.data_vars:
-            arr = np.squeeze(ds[sn].values)
+            da = ds[sn]
+            if level is not None and 'isobaricInhPa' in da.dims:
+                try:
+                    da = da.sel(isobaricInhPa=float(level), method='nearest')
+                except Exception:
+                    pass
+            arr = np.squeeze(da.values)
             if arr.ndim != 2:
                 raise ValueError(
-                    f"Expected 2D field for {sn}, got shape {ds[sn].values.shape} "
+                    f"Expected 2D field for {sn}, got shape {da.values.shape} "
                     f"after squeeze."
                 )
             return arr.astype(np.float32)
@@ -229,6 +246,13 @@ class ECMWFSource(NWPSource):
         "wind_v":        ["v10", "10v"],
         "pressure":      ["msl"],
         "dewpoint":      ["d2m", "2d"],
+        # Upper-air (pressure-level fields)
+        "h500":          ["gh"],
+        "t850":          ["t"],
+        "u850":          ["u"],
+        "v850":          ["v"],
+        "u200":          ["u"],
+        "v200":          ["v"],
     }
 
     def __init__(self):
@@ -255,7 +279,7 @@ class ECMWFSource(NWPSource):
             from ecmwf.opendata import Client
 
             client = Client(source="ecmwf")
-            param_str = "2t/10u/10v/msl/tp/2d"
+            param_str = "2t/10u/10v/msl/tp/2d/gh/500/t/850/u/850/v/850/u/200/v/200"
 
             logger.info(f"[ECMWF] Fetching {date.strftime('%Y%m%d')}_{hour:02d}z step={step} ...")
             client.retrieve(
@@ -310,6 +334,13 @@ class GFSSource(NWPSource):
         "wind_v":        ["10v", "v10"],
         "pressure":      ["prmsl", "msl", "mslma"],
         "humidity":      ["2r", "r2"],
+        # Upper-air (pressure-level fields)
+        "h500":          ["gh", "hgt"],
+        "t850":          ["t", "tmp"],
+        "u850":          ["u", "ugrd"],
+        "v850":          ["v", "vgrd"],
+        "u200":          ["u", "ugrd"],
+        "v200":          ["v", "vgrd"],
     }
 
     # NOAA filter URL parameters
@@ -318,6 +349,9 @@ class GFSSource(NWPSource):
         "lev_10_m_above_ground=on",
         "lev_mean_sea_level=on",
         "lev_surface=on",
+        "lev_850_mb=on",
+        "lev_500_mb=on",
+        "lev_200_mb=on",
     ]
     _GFS_VARS = [
         "var_TMP=on",
@@ -326,6 +360,7 @@ class GFSSource(NWPSource):
         "var_PRMSL=on",
         "var_RH=on",
         "var_APCP=on",
+        "var_HGT=on",
     ]
 
     def __init__(self):
@@ -613,13 +648,22 @@ class NWPPipeline:
     # Field extraction
     # ------------------------------------------------------------------
 
+    # Upper-air variable → (pressure_level_hPa, unit_conversion)
+    _UA_LEVELS = {
+        "h500": 500,
+        "t850": 850,
+        "u850": 850,
+        "v850": 850,
+        "u200": 200,
+        "v200": 200,
+    }
+
     def _get_field(self, ds, src: NWPSource, variable: str) -> np.ndarray:
         """Extract a 2D numpy field from the dataset with unit conversion.
 
         Returns data in ascending-lat order, matching plotter expectation.
         """
         # ECMWF has no direct humidity variable — compute from dewpoint + temperature.
-        # Bypass _get_field unit conversions: _dewpoint_to_rh expects Kelvin for both.
         if variable == "humidity" and isinstance(src, ECMWFSource):
             t_short = src.VAR_SHORTNAMES.get("temperature", ["t2m"])
             d_short = src.VAR_SHORTNAMES.get("dewpoint", ["d2m"])
@@ -632,24 +676,26 @@ class NWPPipeline:
             return field.astype(np.float32)
 
         short_names = src.VAR_SHORTNAMES.get(variable, [variable])
-        field = _extract_2d(ds, short_names)
+        lev = self._UA_LEVELS.get(variable)
+        field = _extract_2d(ds, short_names, level=lev)
 
         # Flip to ascending lat if the dataset is stored N→S
         if float(ds.latitude[0]) > float(ds.latitude[-1]):
             field = field[::-1, ...]
 
         # Unit conversion
-        if variable in ("temperature",) and np.nanmax(field) > 100:
-            # Kelvin → Celsius (water freezes at 273K)
+        if variable in ("temperature", "t850") and np.nanmax(field) > 100:
             field = field - 273.15
 
         if variable == "pressure" and np.nanmax(field) > 5000:
-            # Pa → hPa (standard SLP ~101300 Pa vs ~1013 hPa)
             field = field / 100.0
 
         if variable == "precipitation" and np.nanmax(field) < 1.0:
-            # m → mm (ECMWF tp is in metres)
             field = field * 1000.0
+
+        # Geopotential height: m²/s² → gpm (divide by g=9.80665)
+        if variable == "h500" and np.nanmax(field) > 1000:
+            field = field / 9.80665
 
         return field.astype(np.float32)
 
