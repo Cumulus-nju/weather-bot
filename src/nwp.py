@@ -575,8 +575,8 @@ class NWPPipeline:
         # Dispatch
         if variable == "comprehensive":
             path = self._comprehensive(ds, src, base_title, time_str)
-        elif variable == "wind":
-            path = self._wind(ds, src, base_title, time_str)
+        elif variable == "wind" or variable.startswith("wind_"):
+            path = self._wind_ua(ds, src, variable, base_title, time_str)
         else:
             path = self._scalar(ds, src, variable, base_title, time_str)
 
@@ -605,13 +605,28 @@ class NWPPipeline:
 
     def _wind(self, ds, src: NWPSource, base_title: str,
               time_str: str) -> str:
+        """Surface (10m) wind — kept for comprehensive panel back-compat."""
+        return self._wind_ua(ds, src, "wind", base_title, time_str)
+
+    def _wind_ua(self, ds, src: NWPSource, variable: str,
+                 base_title: str, time_str: str) -> str:
+        """Wind plot — handles surface (10m) and upper-air (850/200hPa)."""
         lon_g, lat_g = self._grid_from_ds(ds)
-        u_field = self._get_field(ds, src, "wind_u")
-        v_field = self._get_field(ds, src, "wind_v")
+
+        if variable == "wind":
+            u_field = self._get_field(ds, src, "wind_u")
+            v_field = self._get_field(ds, src, "wind_v")
+            level_label = "10m"
+        else:
+            lev = variable.split("_")[1]  # "850" or "200"
+            u_field = self._get_field(ds, src, f"u{lev}")
+            v_field = self._get_field(ds, src, f"v{lev}")
+            level_label = f"{lev}hPa"
+
         speed = np.sqrt(u_field ** 2 + v_field ** 2)
 
-        out_name = f"nwp_{src.name.lower()}_wind_{int(time.time())}.png"
-        title = f"{base_title} 10m风场\n{time_str}"
+        out_name = f"nwp_{src.name.lower()}_{variable}_{int(time.time())}.png"
+        title = f"{base_title} {level_label}风场\n{time_str}"
 
         return plot_wind_barbs(lon_g, lat_g, speed, u_field, v_field,
                                title=title,

@@ -27,12 +27,18 @@ VAR_MAP = {
     "气压": "pressure",
     "湿度": "humidity",
     "综合": "comprehensive", "全部": "comprehensive",
+    # Upper-air
+    "h500": "h500", "500hPa": "h500",
+    "t850": "t850", "850hPa": "t850",
+    "高空风场": "wind_850", "高空风850": "wind_850",
 }
 
 VAR_DISPLAY = {
     "temperature": "温度", "precipitation": "降水",
     "wind": "风场", "pressure": "气压",
     "humidity": "湿度", "comprehensive": "综合",
+    "h500": "500hPa位势高度", "t850": "850hPa温度",
+    "wind_850": "850hPa风场", "wind_200": "200hPa急流",
 }
 
 FHOUR_MAP = {"0": 0, "00": 0, "24": 24, "48": 48, "72": 72}
@@ -186,4 +192,78 @@ def _help_text(cmd: str, source: str) -> str:
         f"数据来源: {sl} 0.25°\n"
         f"区域: 全中国 (73-136°E, 16-55°N)\n"
         f"缓存自动清理: 7天"
+
+
+# ---------------------------------------------------------------------------
+# /数据更新 — manually download all NWP data (surface + upper-air)
+# ---------------------------------------------------------------------------
+
+update_cmd = on_command("数据更新", priority=5, block=True)
+
+
+@update_cmd.handle()
+async def handle_update(bot: Bot, event: GroupMessageEvent):
+    await bot.send(event, "开始更新NWP数据（ECMWF + GFS，含高空变量）...\n各步时效: 0/24/48/72h")
+
+    async def _update():
+        from src.nwp import ECMWFSource, GFSSource
+
+        results: list[str] = []
+        for src_cls, label in [(ECMWFSource, "ECMWF"), (GFSSource, "GFS")]:
+            try:
+                src = src_cls()
+                src.cleanup()
+                date, hour = src.get_latest_cycle()
+                for step in [0, 24, 48, 72]:
+                    try:
+                        if not src.is_cached(date, hour, step):
+                            logger.info(f"[{label}] Downloading f{step:03d} ...")
+                            src.get_dataset(date, hour, step)
+                        else:
+                            logger.info(f"[{label}] f{step:03d} already cached")
+                        results.append(f"{label} +{step}h ✅")
+                    except Exception as e:
+                        results.append(f"{label} +{step}h ❌ {str(e)[:80]}")
+                        logger.warning(f"[{label}] f{step:03d} failed: {e}")
+            except Exception as e:
+                results.append(f"{label} 周期检测失败: {str(e)[:80]}")
+
+        if not results:
+            return "更新完成！（所有数据已在缓存中）"
+
+        ok = sum(1 for r in results if "✅" in r)
+        fail = sum(1 for r in results if "❌" in r)
+        status = "\n".join(results[-8:])  # last 8 entries
+        summary = f"更新完成！成功{ok}项，失败{fail}项。\n{status}"
+        if ok == 0:
+            summary = f"更新失败！所有下载均未成功。\n{status}\n\n请检查网络连接后重试。"
+        return summary
+
+    try:
+        result = await asyncio.to_thread(_update)
+        await bot.send(event, result)
+    except Exception as e:
+        await bot.send(event, f"更新过程出错: {str(e)[:200]}")
+
+
+# ---------------------------------------------------------------------------
+# /预报 — generate professional weather forecast text
+# ---------------------------------------------------------------------------
+
+forecast_cmd = on_command("预报", priority=5, block=True)
+
+
+@forecast_cmd.handle()
+async def handle_forecast(bot: Bot, event: GroupMessageEvent):
+    await bot.send(event, "正在生成天气形势分析，请稍候...")
+
+    try:
+        from src.forecast import ForecastEngine
+
+        engine = ForecastEngine()
+        text = await asyncio.to_thread(engine.generate)
+        await bot.send(event, text)
+    except Exception as e:
+        logger.error(f"Forecast failed: {traceback.format_exc()}")
+        await bot.send(event, f"预报生成失败: {str(e)[:200]}")
     )
