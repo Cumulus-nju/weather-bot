@@ -482,6 +482,35 @@ class NWPPipeline:
         self.extent = CHINA_EXTENT
         logger.info(f"NWPPipeline init: "
                     f"extent={CHINA_EXTENT}, grid={self.china_lon_g.shape}")
+        # Background pre-fetch of latest cycle so first user request hits cache
+        t = threading.Thread(target=self._prewarm, daemon=True, name="nwp-prewarm")
+        t.start()
+
+    # ------------------------------------------------------------------
+    # Background pre-fetch
+    # ------------------------------------------------------------------
+
+    def _prewarm(self):
+        """Pre-download common steps for both sources in background.
+
+        First user request of a new cycle will hit the 6h cache instead of
+        waiting for a live download.
+        """
+        COMMON_STEPS = [0, 24]  # analysis + 24h precipitation forecast
+        for src in self._sources.values():
+            try:
+                date, hour = src.get_latest_cycle()
+                for step in COMMON_STEPS:
+                    if not src.is_cached(date, hour, step):
+                        logger.info(f"[{src.name}] Pre-warming {date.strftime('%Y%m%d')}_{hour:02d}z f{step:03d} ...")
+                        try:
+                            src.get_dataset(date, hour, step)
+                        except Exception:
+                            logger.warning(f"[{src.name}] Pre-warm failed for f{step:03d}, skipped")
+                    else:
+                        logger.info(f"[{src.name}] Pre-warm: {date.strftime('%Y%m%d')}_{hour:02d}z f{step:03d} already cached")
+            except Exception as e:
+                logger.warning(f"[{src.name}] Pre-warm error: {e}")
 
     # ------------------------------------------------------------------
     # Public API
