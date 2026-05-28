@@ -286,30 +286,48 @@ class ECMWFSource(NWPSource):
 
             client = Client(source="ecmwf")
 
-            # Surface parameters
-            self._progress(f"[ECMWF] ↓ surface {date.strftime('%Y%m%d')}_{hour:02d}z +{step}h ...")
+            # Surface parameters (with retry)
             tmp_sfc = cache_path.with_suffix(".sfc.grib2")
-            client.retrieve(
-                date=date.strftime("%Y-%m-%d"),
-                time=hour,
-                type="fc",
-                step=step,
-                param="2t/10u/10v/msl/tp/2d",
-                target=str(tmp_sfc),
-            )
+            for attempt in range(1, 4):
+                try:
+                    self._progress(f"[ECMWF] ↓ surface {date.strftime('%Y%m%d')}_{hour:02d}z +{step}h (attempt {attempt}) ...")
+                    if tmp_sfc.exists():
+                        tmp_sfc.unlink()
+                    client.retrieve(
+                        date=date.strftime("%Y-%m-%d"),
+                        time=hour,
+                        type="fc",
+                        step=step,
+                        param="2t/10u/10v/msl/tp/2d",
+                        target=str(tmp_sfc),
+                    )
+                    break
+                except Exception as e:
+                    logger.warning(f"[ECMWF] surface attempt {attempt} failed: {e}")
+                    if attempt < 3:
+                        time.sleep(15 * attempt)
 
-            # Upper-air parameters
-            self._progress(f"[ECMWF] ↓ upper-air {date.strftime('%Y%m%d')}_{hour:02d}z +{step}h ...")
+            # Upper-air parameters (with retry)
             tmp_ua = cache_path.with_suffix(".ua.grib2")
-            client.retrieve(
-                date=date.strftime("%Y-%m-%d"),
-                time=hour,
-                type="fc",
-                step=step,
-                param="z/t/u/v",
-                levelist="200/500/850",
-                target=str(tmp_ua),
-            )
+            for attempt in range(1, 4):
+                try:
+                    self._progress(f"[ECMWF] ↓ upper-air {date.strftime('%Y%m%d')}_{hour:02d}z +{step}h (attempt {attempt}) ...")
+                    if tmp_ua.exists():
+                        tmp_ua.unlink()
+                    client.retrieve(
+                        date=date.strftime("%Y-%m-%d"),
+                        time=hour,
+                        type="fc",
+                        step=step,
+                        param="z/t/u/v",
+                        levelist="200/500/850",
+                        target=str(tmp_ua),
+                    )
+                    break
+                except Exception as e:
+                    logger.warning(f"[ECMWF] upper-air attempt {attempt} failed: {e}")
+                    if attempt < 3:
+                        time.sleep(15 * attempt)
 
             # Merge both GRIB files into tmp_grib
             with open(tmp_grib, "wb") as out:
