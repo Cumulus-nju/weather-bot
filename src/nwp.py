@@ -371,12 +371,12 @@ class GFSSource(NWPSource):
         dir_str = f"gfs.{date_str}/{hour:02d}/atmos"
 
         if step == 0:
-            file_str = f"gfs.t{hour:02d}z.pgrb2.0p50.f000"
+            file_str = f"gfs.t{hour:02d}z.pgrb2.0p25.f000"
         else:
-            file_str = f"gfs.t{hour:02d}z.pgrb2.0p50.f{step:03d}"
+            file_str = f"gfs.t{hour:02d}z.pgrb2.0p25.f{step:03d}"
 
         url = (
-            f"https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p50.pl"
+            f"https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl"
             f"?file={file_str}"
             f"&{'&'.join(self._GFS_LEVELS)}"
             f"&{'&'.join(self._GFS_VARS)}"
