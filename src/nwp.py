@@ -13,6 +13,7 @@ GFS:   NOAA NOMADS GRIB filter with server-side BBOX subset
 from __future__ import annotations
 
 import logging
+import sys
 import threading
 import time
 from abc import ABC, abstractmethod
@@ -164,6 +165,11 @@ class NWPSource(ABC):
         self.cache_dir = NWP_CACHE_DIR / cache_subdir
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
+    def _progress(self, msg: str):
+        """Log + force-flush to terminal so user sees real-time progress."""
+        logger.info(msg)
+        print(f"  {msg}", flush=True)
+
     # ------------------------------------------------------------------
     # Cycle tracking
     # ------------------------------------------------------------------
@@ -206,7 +212,7 @@ class NWPSource(ABC):
 
         p = self._cache_path(date, hour, step)
         if self.is_cached(date, hour, step):
-            logger.info(f"[{self.name}] Cache hit: {p.name}")
+            self._progress(f"[{self.name}] ✓ cache hit: {p.name}")
             with _grib_lock:
                 return xr.open_dataset(p)
 
@@ -281,7 +287,7 @@ class ECMWFSource(NWPSource):
             client = Client(source="ecmwf")
             param_str = "2t/10u/10v/msl/tp/2d/gh/500/t/850/u/850/v/850/u/200/v/200"
 
-            logger.info(f"[ECMWF] Fetching {date.strftime('%Y%m%d')}_{hour:02d}z step={step} ...")
+            self._progress(f"[ECMWF] ↓ {date.strftime('%Y%m%d')}_{hour:02d}z +{step}h ...")
             client.retrieve(
                 date=date.strftime("%Y-%m-%d"),
                 time=hour,
@@ -291,7 +297,8 @@ class ECMWFSource(NWPSource):
                 target=str(tmp_grib),
             )
 
-            logger.info(f"[ECMWF] Downloaded {tmp_grib.stat().st_size/1e6:.1f} MB, decoding ...")
+            size_mb = tmp_grib.stat().st_size / 1e6
+            self._progress(f"[ECMWF] ✓ {date.strftime('%Y%m%d')}_{hour:02d}z +{step}h ({size_mb:.1f}MB) decoding ...")
 
             with _grib_lock:
                 # cfgrib.open_datasets splits on hypercube (surface / heightAboveGround / meanSea)
@@ -309,7 +316,8 @@ class ECMWFSource(NWPSource):
 
             # Save as netCDF
             ds.to_netcdf(cache_path)
-            logger.info(f"[ECMWF] Cached → {cache_path.name} ({cache_path.stat().st_size/1e3:.0f} KB)")
+            self._progress(f"[ECMWF] ✓ cached {cache_path.name} "
+                            f"({cache_path.stat().st_size/1e3:.0f} KB)")
 
             return cache_path
 
@@ -422,6 +430,8 @@ class GFSSource(NWPSource):
             f"&dir=%2F{dir_str}"
         )
 
+        self._progress(f"[GFS] ↓ {date_str}_{hour:02d}z +{step}h ...")
+
         import httpx
 
         for attempt in range(1, 6):
@@ -434,8 +444,8 @@ class GFSSource(NWPSource):
                             f"Response is not GRIB2 (starts with {resp.content[:80]!r})"
                         )
                     tmp_grib.write_bytes(resp.content)
-                    logger.info(f"[GFS] Downloaded {len(resp.content)/1e3:.0f} KB "
-                                f"(attempt {attempt})")
+                    size_kb = len(resp.content) / 1e3
+                    self._progress(f"[GFS] ✓ {date_str}_{hour:02d}z +{step}h ({size_kb:.0f}KB) decoding ...")
                     break
                 else:
                     logger.warning(f"[GFS] HTTP {resp.status_code}, size={len(resp.content)} "
@@ -474,8 +484,8 @@ class GFSSource(NWPSource):
                 ds = ds.sortby("longitude")
 
             ds.to_netcdf(cache_path)
-            logger.info(f"[GFS] Cached → {cache_path.name} "
-                        f"({cache_path.stat().st_size/1e3:.0f} KB)")
+            self._progress(f"[GFS] ✓ cached {cache_path.name} "
+                            f"({cache_path.stat().st_size/1e3:.0f} KB)")
 
             return cache_path
 
